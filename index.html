@@ -419,9 +419,11 @@ input[type=color]{width:46px;height:36px;border:1px solid var(--line2);backgroun
         <h3>Videos hinzufügen</h3>
         <div class="drop" id="drop">
           <span class="muted small">Vom Handy, Tablet oder Laptop, mehrere auf einmal. Die Videos bleiben auf deinem Gerät, nichts wird hochgeladen.</span>
-          <button class="btn vid" id="addClips">Videos oder Fotos auswählen</button>
+          <div class="row"><button class="btn vid" id="addClips">Videos oder Fotos auswählen</button><button class="btn" id="addClipsDoc">Aus „Eigene Dateien“ wählen</button></div>
+          <span class="muted small" id="docHint">Läuft ein Video in der Vorschau nicht oder bricht ab? Dann über <b>„Aus ‚Eigene Dateien‘ wählen“</b> laden. Die Galerie-Auswahl von Android gibt große Videos manchmal nicht vollständig frei.</span>
+          <input type="file" id="fileInDoc" multiple hidden>
           <input type="file" id="fileIn" accept="video/*,image/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.3gp,.mts,.m2ts,.wmv,.flv,.mpg,.mpeg,.ts,.ogv,.jpg,.jpeg,.png,.webp" multiple hidden>
-          <input type="file" id="relinkIn" accept="video/*,image/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.3gp,.mts,.m2ts,.wmv,.flv,.mpg,.mpeg,.ts,.ogv" hidden>
+          <input type="file" id="relinkIn" hidden>
         </div>
         <details class="more"><summary>Welche Formate gehen?</summary>
           <p class="small muted">MP4, MOV, WebM, MKV, AVI, 3GP, MTS und mehr. Was dein Browser nicht direkt abspielen kann (z. B. HEVC/H.265 vom Handy, ProRes, AVI), wandelt die App automatisch in MP4 um. Das dauert je nach Länge ein bis einige Minuten.</p>
@@ -2191,7 +2193,7 @@ function reasonText(err,codec,name){if(codec&&!/^(H\.264|VP9)/.test(codec))retur
   if(err==='novideo')return `„${name}“: Der Browser findet kein abspielbares Bild${codec?' ('+codec+')':''}.`;
   if(err==='timeout')return `„${name}“ ließ sich nicht rechtzeitig lesen.`;return `„${name}“ hat ein Format, das dieser Browser nicht direkt abspielt${codec?' ('+codec+')':''}.`;}
 function ffFailText(){if(badOrigin)return 'Die App wurde direkt als Datei geöffnet. So darf der Browser den Umwandler nicht starten. Bitte über GitHub Pages (https://…) öffnen.';if(FF.blocked)return 'In der Claude-Ansicht darf der Umwandler nicht geladen werden. In der installierten Version (index.html auf GitHub Pages) klappt das Umwandeln.';return 'Der Umwandler konnte nicht geladen werden'+(FF.lastErr?' ('+FF.lastErr+')':'')+'. Prüfe die Internetverbindung und versuche es erneut.';}
-async function storeMedia(key,blob){if(S.project.demo)return;try{await dbPutMedia(key,blob);try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}}catch(e){S.noStore=true;updateProjBar();}}
+async function storeMedia(key,blob){if(S.project.demo)return;try{await dbPutMedia(key,blob);try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}}catch(e){console.warn('Speichern',e);if(!(e&&/NotReadable|NotFound/.test(e.name||''))){S.noStore=true;updateProjBar();}}}
 const mb=x=>(x/1048576).toFixed(x<10485760?1:0).replace('.',',');
 const badOrigin=!/^https?:$/.test(location.protocol);
 async function readLocal(f,job){if(!f.stream||!f.size)return f;const rd=f.stream().getReader(),blobs=[];let buf=[],bufN=0,got=0,last=Date.now(),stalled=false;
@@ -2228,7 +2230,7 @@ async function bgCopy(clip,f){clip._copying=true;const job={id:uid(),name:f.name
     if(oldDisk&&oldDisk!==cp._disk)setTimeout(async()=>{try{const d=await opfsDir();d&&await d.removeEntry(oldDisk);}catch(e){}},8000);
     for(const k of[...pool.keys()])dropEl(k);try{URL.revokeObjectURL(old);}catch(e){}renderClips();syncVideos(S.t);renderNow();storeMedia(clip.media,cp);}
   catch(e){clip._copying=false;S.jobs=S.jobs.filter(x=>x!==job);renderClips();queueProxy(clip);queueAnalyze(clip);if(e&&e.message==='abort')return;console.warn('Hintergrund-Kopie',e);
-    toast('Das Handy gibt dieses Video nicht vollständig frei – bitte in den Handyspeicher (Ordner „Download“) kopieren und neu laden',null,null,9000);storeMedia(clip.media,f);}}
+    toast('Das Handy gibt dieses Video nicht vollständig frei. Tippe in der Vorschau auf „Video neu auswählen“ und wähle es über „Eigene Dateien“.',null,null,10000);clip.playErr=clip.playErr||4;clip.recovered=2;fixBtnUpd();renderNow();}}
 async function quickRead(f,job){const tm=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('Zeit')),ms))]);const M=2*1048576;
   job.label=`Video wird geprüft … ${mb(f.size)} MB`;updateJob(job);
   const a=await tm(f.slice(0,Math.min(M,f.size)).arrayBuffer(),30000);if(!a.byteLength)throw new Error('leer');
@@ -2272,13 +2274,16 @@ async function importFiles(files){
     if(/\.360$/i.test(f.name)){S.jobs.push({id:uid(),name:f.name,state:'err',why:'GoPro-.360-Datei',err:'Diese Datei bitte zuerst in der GoPro-App oder im GoPro Player als 360°-Video (MP4) exportieren.',file:f});renderClips();continue;}
     if(/^image\//.test(f.type)||IMG_RX.test(f.name)){await addImageFile(f);continue;}
     if(/^audio\//.test(f.type)||AUDIO_RX.test(f.name)){toast(`„${f.name}“ ist Musik. Bitte unter „Musik“ laden.`);continue;}
+    if(f.type&&!/^video\//.test(f.type)&&!/\.(mp4|mov|m4v|webm|mkv|avi|3gp|mts|m2ts|wmv|flv|mpe?g|ts|ogv|insv|lrv)$/i.test(f.name)){toast(`„${f.name}“ ist kein Video oder Foto`);continue;}
     await addVideoFile(f);}
   const ok=S.clips.filter(c=>!c.missing).length;
   if(ok&&!S.segs.length)toast(`${ok} Clip${ok>1?'s':''} bereit`,'Auto-Schnitt',()=>{tab('auto');autoCut();});
 }
 $('#addClips').onclick=()=>$('#fileIn').click();
+$('#addClipsDoc').onclick=()=>$('#fileInDoc').click();
+$('#fileInDoc').onchange=e=>{const f=[...e.target.files];e.target.value='';importFiles(f);};
 $('#fileIn').onchange=e=>{const f=[...e.target.files];e.target.value='';importFiles(f);};
-$('#fixBtn').onclick=()=>{const c=$('#fixBtn')._clip;if(!c)return;S.relinkClip=c;toast('Bitte das gleiche Video nochmal auswählen – am besten über „Eigene Dateien“ aus dem Ordner „Download“');$('#relinkIn').click();};
+$('#fixBtn').onclick=()=>{const c=$('#fixBtn')._clip;if(!c)return;S.relinkClip=c;toast(`Jetzt „${c.name}“ suchen – meist im Ordner DCIM › Camera oder Download`,null,null,7000);$('#relinkIn').click();};
 $('#relinkIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';const c=S.relinkClip;S.relinkClip=null;if(!f||!c)return;if(c.kind==='image'||/^image\//.test(f.type))await addImageFile(f,c);else{c.recovered=0;c.playErr=0;c.proxyFail=false;for(const k of[...pool.keys()])dropEl(k);await addVideoFile(f,c);syncVideos(S.t);renderNow();}toast('Video neu verknüpft');};
 (function(){const d=$('#drop');['dragenter','dragover'].forEach(k=>d.addEventListener(k,e=>{e.preventDefault();d.classList.add('over');}));
   ['dragleave','drop'].forEach(k=>d.addEventListener(k,e=>{e.preventDefault();d.classList.remove('over');}));d.addEventListener('drop',e=>importFiles(e.dataTransfer.files));})();
