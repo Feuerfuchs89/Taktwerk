@@ -1,0 +1,35 @@
+{
+  "name": "Poi-Studio",
+  "short_name": "Poi-Studio",
+  "lang": "de",
+  "start_url": "./poi.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#120b1c",
+  "theme_color": "#120b1c",
+  "description": "Videos auf den Beat schneiden – direkt im Browser, ohne Upload.",
+  "icons": [
+    {
+      "src": "poi-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "poi-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "poi-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "poi-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
