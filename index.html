@@ -131,6 +131,7 @@ body.fullon .stage{z-index:200;position:relative;top:auto}body.fullon .top{z-ind
 .safe .b{left:0;right:0;bottom:0;height:22%}
 .safe .r{right:0;top:38%;bottom:22%;width:15%}
 .safe em{position:absolute;left:8px;bottom:calc(22% + 6px);font-style:normal;font-size:11px;color:var(--accent);background:rgba(0,0,0,.55);padding:2px 6px;border-radius:5px}
+.fixbtn{position:absolute;left:50%;bottom:16%;transform:translateX(-50%);z-index:5;white-space:nowrap;box-shadow:0 6px 20px rgba(0,0,0,.5)}
 .badge360{position:absolute;top:10px;left:10px;font:600 11px var(--f-mono);background:rgba(0,0,0,.6);color:var(--teal);padding:3px 7px;border-radius:6px;pointer-events:none}
 .busy{position:absolute;inset:0;display:grid;place-items:center;background:rgba(5,10,14,.72);font-weight:600;font-size:14px;text-align:center;padding:20px}
 .transport{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
@@ -375,6 +376,7 @@ input[type=color]{width:46px;height:36px;border:1px solid var(--line2);backgroun
       <canvas id="cv" width="540" height="960" aria-label="Vorschau des Shorts"></canvas>
       <div class="safe" id="safe" hidden><i class="b"></i><i class="r"></i><em>Hier liegen Titel &amp; Buttons von YouTube</em></div>
       <div class="badge360" id="badge360" hidden>360°</div>
+      <button class="btn primary fixbtn" id="fixBtn" hidden>Video neu auswählen</button>
       <div class="busy" id="busy" hidden>Musik wird erzeugt …</div>
       <div class="fullui" id="fullUi" hidden><button class="fx" id="fullClose" aria-label="Vollbild schließen">✕</button><div class="fplay" id="fullPlay" hidden><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></div><div class="fbar"><i id="fullProg"></i></div></div>
     </div>
@@ -1235,9 +1237,18 @@ const srcUrl=c=>(!S.exporting&&S.useProxy!==false&&c.proxyUrl)?c.proxyUrl:c.url;
 function proxyBroken(c,why){if(!c.proxyUrl)return;console.warn('Vorschau-Kopie defekt',why);try{URL.revokeObjectURL(c.proxyUrl);}catch(e){}c.proxyUrl=null;c.proxyFail=true;if(c.proxyMedia){dbDelMedia(c.proxyMedia).catch(()=>{});c.proxyMedia=null;scheduleSave();}
   for(const k of[...pool.keys()])dropEl(k);syncVideos(S.t);renderNow();toast('Vorschau-Kopie ließ sich nicht abspielen – nutze jetzt das Original');}
 function watchEl(el,key,c,url){if(el._watched)return;el._watched=true;el._t0=performance.now();
-  el.addEventListener('error',()=>{const code=el.error?el.error.code:0;if(url===c.proxyUrl)proxyBroken(c,'Fehler '+code);else{c.playErr=code||-1;renderNow();}});
+  el.addEventListener('error',()=>{const code=el.error?el.error.code:0;if(url===c.proxyUrl)proxyBroken(c,'Fehler '+code);else{c.playErr=code||-1;renderNow();recoverClip(c);}});
   el.addEventListener('loadeddata',()=>{c.playErr=0;});
   setTimeout(()=>{if(pool.get(key)!==el||el.readyState>=2)return;if(url===c.proxyUrl)proxyBroken(c,'lädt nicht');else{c.playErr=c.playErr||-2;renderNow();}},9000);}
+/* Original lässt sich nicht (mehr) abspielen: erst neue Adresse, dann Kopie auf den App-Speicher versuchen. Klappt beides nicht, zeigt die Vorschau „Video neu auswählen“. */
+async function recoverClip(c){if(!c||c.kind!=='video'||!c.blob||c._recovering||(c.recovered||0)>=2)return;c._recovering=true;c.recovered=(c.recovered||0)+1;
+  try{if(c.recovered===1){const nu=URL.createObjectURL(c.blob),pm=await Promise.race([probe(nu),sleep(20000).then(()=>({ok:false}))]);
+      if(pm&&pm.ok){const old=c.url;c.url=nu;c.playErr=0;for(const k of[...pool.keys()])dropEl(k);try{URL.revokeObjectURL(old);}catch(e){}syncVideos(S.t);renderNow();return;}URL.revokeObjectURL(nu);}
+    if(!c.blob._disk){await bgCopy(c,c.blob);}}
+  catch(e){console.warn('Wiederherstellung',e);}finally{c._recovering=false;fixBtnUpd();renderNow();}}
+function fixBtnUpd(){const b=document.getElementById('fixBtn');if(!b)return;let c=null;if(!S.exporting){const sg=S.segs[segAt(S.t)];c=sg?clipById(sg.clip):null;}
+  const show=!!(c&&c.kind==='video'&&c.playErr>0&&!c._recovering&&!S.jobs.some(j=>j.state==='work'));b.hidden=!show;if(show)b._clip=c;}
+setInterval(fixBtnUpd,700);
 function getEl(s,c){const key=s._k||s.id,url=srcUrl(c);let el=pool.get(key);if(el&&el._url===url)return el;if(el)dropEl(key);if(String(key).startsWith('pip')){const e2=document.createElement('video');e2._pip=true;return getElMake(key,url,e2);}
   const el2=getElMake(key,url,null);watchEl(el2,key,c,url);return el2;}
 function getElMake(key,url,pre){let el;
@@ -1624,8 +1635,8 @@ function drawSeg(L,s,t){const W=cv.width,H=cv.height,g=L.g;if(L.c.width!==W||L.c
   if(c.kind==='demo')src=c.drawAt(srcT);else if(c.kind==='image')src=c.img||null;else{if(s.rev&&!S.smoothExp)src=revFrame(s,c,srcT);if(!src){const e=pool.get(s._k);if(e&&e.readyState>=2&&!e._loadingOther)src=e;}}
   if(!src){if(c.kind==='video'&&!S.exporting&&L===MAINL||c.kind==='video'&&!S.exporting&&L===LA){const e=pool.get(s._k);g.save();g.fillStyle='rgba(255,255,255,.75)';g.textAlign='center';g.textBaseline='middle';const fs=Math.round(Math.min(W,H)/26);g.font=`600 ${fs}px ${FONTS.klar.f}`;
       const msg=c.playErr>0?`Video lässt sich hier nicht abspielen (Fehler ${c.playErr})`:c.playErr===-2?'Video lädt sehr langsam …':'Video wird geladen …';g.fillText(msg,W/2,H/2);
-      if(c.playErr){g.font=`500 ${Math.round(fs*.75)}px ${FONTS.klar.f}`;g.fillText(e?`Status ${e.readyState}/${e.networkState}${c.proxyUrl?' · Vorschau-Kopie':' · Original'}`:'kein Abspieler',W/2,H/2+fs*1.4);const sd=c.playErr===4&&e&&e.networkState===3;g.fillText(sd?'Das Handy gibt die Datei nicht mehr frei (typisch bei SD-Karte).':'Tipp: unter „Clips“ die Vorschau-Kopien ausschalten',W/2,H/2+fs*2.6);
-      if(sd)g.fillText('Video in den Handyspeicher (Ordner „Download“) kopieren und neu laden.',W/2,H/2+fs*3.6);}g.restore();}
+      if(c.playErr){g.font=`500 ${Math.round(fs*.75)}px ${FONTS.klar.f}`;g.fillText(e?`Status ${e.readyState}/${e.networkState}${c.proxyUrl?' · Vorschau-Kopie':' · Original'}`:'kein Abspieler',W/2,H/2+fs*1.4);const sd=c.playErr===4&&e&&e.networkState===3,tip=c._recovering?'Wird repariert – die App sichert das Video neu …':sd?'Das Handy gibt die Datei nicht mehr frei. Tippe unten auf „Video neu auswählen“.':'Tipp: unter „Clips“ die Vorschau-Kopien ausschalten';
+      const wr=(txt,y)=>{const ws=txt.split(' ');let ln='',yy=y;for(const w of ws){const t2=ln?ln+' '+w:w;if(g.measureText(t2).width>W*.86&&ln){g.fillText(ln,W/2,yy);ln=w;yy+=fs*1.05;}else ln=t2;}if(ln)g.fillText(ln,W/2,yy);};wr(tip,H/2+fs*2.6);}g.restore();}
     return;}
   const v=viewAt(s,lt),bd=beatDur(),pa=s.pulse!=null?s.pulse:S.pulseAmt,pe=(s.pulseEvery||S.pulseEvery||1)*bd,pulse=pa>0?1+pa*Math.exp(-((t%pe)/bd)*5):1,LK=lookOf(s);
   g.save();g.translate(W/2,H/2);g.scale(pulse,pulse);g.translate(-W/2,-H/2);if(CANFILTER&&gradeOn(LK))g.filter=filterStr(LK);
@@ -2191,8 +2202,29 @@ async function readLocal(f,job){if(!f.stream||!f.size)return f;const rd=f.stream
   catch(e){clearInterval(iv);throw e;}clearInterval(iv);
   if(job.abort)throw new Error('abort');if(stalled||got<f.size)throw new Error('stall');
   if(buf.length)blobs.push(new Blob(buf));const out=new File(blobs,f.name,{type:f.type,lastModified:f.lastModified});out._local=true;return out;}
+/* Video in Stücken (8 MB) lesen, jedes Stück bis zu 4× versuchen, und auf den privaten App-Speicher schreiben.
+   So bleibt das Video abspielbar, auch wenn Android den Zugriff auf die Originaldatei (SD-Karte, Galerie) später entzieht,
+   und große Videos belegen keinen Arbeitsspeicher. */
+async function opfsDir(){try{if(!navigator.storage||!navigator.storage.getDirectory)return null;const r=await navigator.storage.getDirectory();return await r.getDirectoryHandle('clips',{create:true});}catch(e){return null;}}
+async function readChunk(f,a,b){let err;for(let i=0;i<4;i++){try{const buf=await Promise.race([f.slice(a,b).arrayBuffer(),sleep(40000).then(()=>{throw new Error('Zeit');})]);if(buf.byteLength===b-a)return buf;err=new Error('kurz');}catch(e){err=e;}await sleep(300+i*700);}throw err||new Error('stall');}
+async function copyToDisk(f,job,key){if(!f.size)throw new Error('leer');const dir=await opfsDir();const C=8388608;
+  if(!dir){/* kein App-Speicher: Stücke im Arbeitsspeicher sammeln */const parts=[];for(let a=0;a<f.size;a+=C){if(job.abort)throw new Error('abort');parts.push(await readChunk(f,a,Math.min(f.size,a+C)));job.p=Math.min(1,(a+C)/f.size);job.label=`Video wird gesichert … ${Math.round(job.p*100)} % · ${mb(Math.min(f.size,a+C))} von ${mb(f.size)} MB`;updateJob(job);}
+    const out=new File(parts,f.name,{type:f.type,lastModified:f.lastModified});out._local=true;return out;}
+  const nm=(key||uid())+'-'+String(f.name).replace(/[^\w.-]+/g,'_');let fh,w;
+  try{fh=await dir.getFileHandle(nm,{create:true});w=await fh.createWritable();}catch(e){throw e;}
+  try{for(let a=0;a<f.size;a+=C){if(job.abort)throw new Error('abort');const b=Math.min(f.size,a+C);await w.write(await readChunk(f,a,b));job.p=b/f.size;job.label=`Video wird gesichert … ${Math.round(job.p*100)} % · ${mb(b)} von ${mb(f.size)} MB`;updateJob(job);}
+    await w.close();}
+  catch(e){try{await w.abort();}catch(_){}try{await dir.removeEntry(nm);}catch(_){}throw e;}
+  const df=await fh.getFile();if(df.size!==f.size)throw new Error('Größe');
+  const out=new File([df],f.name,{type:f.type||df.type,lastModified:f.lastModified});out._local=true;out._disk=nm;return out;}
+/* alte Sicherungen im App-Speicher aufräumen (die Projekte haben ihre eigene Kopie) */
+async function opfsCleanup(){try{const dir=await opfsDir();if(!dir||!dir.entries)return;const keep=new Set(S.clips.map(c=>c.blob&&c.blob._disk).filter(Boolean));
+  for await(const [n,h] of dir.entries()){if(keep.has(n))continue;try{const f=await h.getFile();if(Date.now()-f.lastModified>36e5*6)await dir.removeEntry(n);}catch(e){}}}catch(e){}}
+async function safeCopy(f,job,key){try{return await copyToDisk(f,job,key);}catch(e){if(e&&e.message==='abort')throw e;console.warn('Sicherung auf App-Speicher',e);job.p=0;return await readLocal(f,job);}}
 async function bgCopy(clip,f){const job={id:uid(),name:f.name,state:'work',p:0,label:'Video wird für die Vorschau gesichert …',why:'',file:f};S.jobs.push(job);renderClips();
-  try{const cp=await readLocal(f,job);S.jobs=S.jobs.filter(x=>x!==job);const old=clip.url;clip.blob=cp;clip.url=URL.createObjectURL(cp);clip.playErr=0;
+  try{const cp=await safeCopy(f,job,clip.media);S.jobs=S.jobs.filter(x=>x!==job);const nu=URL.createObjectURL(cp),pm=await Promise.race([probe(nu),sleep(30000).then(()=>({ok:false}))]);
+    if(!pm||!pm.ok){URL.revokeObjectURL(nu);throw new Error('Kopie nicht abspielbar');}
+    const old=clip.url;clip.blob=cp;clip.url=nu;clip.playErr=0;clip.recovered=0;if(clip.proxyFail&&!clip.proxyUrl){clip.proxyFail=false;queueProxy(clip);}
     for(const k of[...pool.keys()])dropEl(k);try{URL.revokeObjectURL(old);}catch(e){}renderClips();syncVideos(S.t);renderNow();storeMedia(clip.media,cp);}
   catch(e){S.jobs=S.jobs.filter(x=>x!==job);renderClips();if(e&&e.message==='abort')return;console.warn('Hintergrund-Kopie',e);
     toast('Das Handy gibt dieses Video nicht vollständig frei – bitte in den Handyspeicher (Ordner „Download“) kopieren und neu laden',null,null,9000);storeMedia(clip.media,f);}}
@@ -2208,7 +2240,7 @@ async function addVideoFile(f,relink,noConvert){
     /* 2. Versuch: Anfang und Ende der Datei lesen */
     if(!direct){try{direct=await quickRead(f,job);}catch(e){why1+=(why1?' · ':'')+(e&&(e.name||e.message)||'');console.warn('Direktzugriff',e);}}
     if(direct){f._local=true;f._direct=true;}
-    else try{job.label='Video wird eingelesen …';f=await readLocal(f,job);}
+    else try{job.label='Video wird eingelesen …';f=await safeCopy(f,job,null);}
     catch(e){S.jobs=S.jobs.filter(x=>x!==job);if(e&&e.message==='abort'){renderClips();return null;}
       const det=`${mb(job.file.size||0)} MB${job.p?` · gelesen ${Math.round(job.p*100)} %`:''}${e&&(e.name||e.message)?' · '+(e.name||e.message):''}${why1?' · '+why1:''}`;
       S.jobs.push({id:uid(),name:job.name,state:'err',why:`„${job.name}“ kam nicht vollständig an (${det}).`,err:'Das Handy hat die Videodatei nicht (vollständig) geliefert.',
@@ -2245,7 +2277,8 @@ async function importFiles(files){
 }
 $('#addClips').onclick=()=>$('#fileIn').click();
 $('#fileIn').onchange=e=>{const f=[...e.target.files];e.target.value='';importFiles(f);};
-$('#relinkIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';const c=S.relinkClip;S.relinkClip=null;if(!f||!c)return;if(c.kind==='image'||/^image\//.test(f.type))await addImageFile(f,c);else await addVideoFile(f,c);toast('Video neu verknüpft');};
+$('#fixBtn').onclick=()=>{const c=$('#fixBtn')._clip;if(!c)return;S.relinkClip=c;toast('Bitte das gleiche Video nochmal auswählen – am besten über „Eigene Dateien“ aus dem Ordner „Download“');$('#relinkIn').click();};
+$('#relinkIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';const c=S.relinkClip;S.relinkClip=null;if(!f||!c)return;if(c.kind==='image'||/^image\//.test(f.type))await addImageFile(f,c);else{c.recovered=0;c.playErr=0;c.proxyFail=false;for(const k of[...pool.keys()])dropEl(k);await addVideoFile(f,c);syncVideos(S.t);renderNow();}toast('Video neu verknüpft');};
 (function(){const d=$('#drop');['dragenter','dragover'].forEach(k=>d.addEventListener(k,e=>{e.preventDefault();d.classList.add('over');}));
   ['dragleave','drop'].forEach(k=>d.addEventListener(k,e=>{e.preventDefault();d.classList.remove('over');}));d.addEventListener('drop',e=>importFiles(e.dataTransfer.files));})();
 
@@ -3282,7 +3315,7 @@ function initDesignUi(){
 /* ========== Start ========== */
 (async function init(){
   try{S.useProxy=localStorage.getItem('kit-proxy')!=='0';}catch(e){S.useProxy=true;}$('#proxyT').checked=S.useProxy;
-  $('#originWarn').hidden=!badOrigin;initDesignUi();initFxUi();initCards();initThumb();initSeries();initFold();initPoi();initNextSteps();tabsFade();initFavicon();initAi();designBadges();initGuide();renderTpls();loadLogo();syncSettingsUi();
+  $('#originWarn').hidden=!badOrigin;initDesignUi();initFxUi();initCards();initThumb();initSeries();initFold();initPoi();initNextSteps();tabsFade();initFavicon();setTimeout(opfsCleanup,20000);initAi();designBadges();initGuide();renderTpls();loadLogo();syncSettingsUi();
   try{const tb=localStorage.getItem('kit-tab'),bt=document.querySelector(`.tabs button[data-tab="${tb}"]`);if(tb&&bt&&!bt.hidden)tab(tb);}catch(e){}
   let opened=false;
   try{const last=localStorage.getItem('kit-last');if(last){const p=await dbGetProject(last);if(p){await loadProjectData(p,k=>dbGetMedia(k));opened=true;}}}catch(e){}
